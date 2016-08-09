@@ -7,6 +7,7 @@ import re
 from sklearn import cross_validation
 from scipy import sparse
 import time
+import scipy.io
 from  sklearn.metrics import precision_recall_fscore_support as measure
 
 
@@ -24,33 +25,23 @@ class HypernymClassifier():
         print ('Found ' + str(self.maxPattern) + ' different patterns')
         self.X,self.Y = self._convertMapToSparseMatrix(self.pairDict,self.maxPattern+1)
         print ('number of true pairs in Y: ' + str(np.count_nonzero(self.Y)))
-        # print('X: ' + str(self.X.shape[0]))
-        # print('Y: '+ str(self.Y.shape[0]))
-        # print('X:' + str(self.X.todense()))
-        # print('Y:' + str(self.Y))
-        # print ('vector length: ' + str (self.maxPattern))
+        print ('vector length: ' + str (self.maxPattern))
 
-        # file = 'x.txt'
-        # print ('writing X to: '+file)
-        # np.savetxt(file,self.X)
+        file = 'x.txt'
+        print ('writing X to: '+file)
+        self._save_sparse_matrix(file,self.X)
         file = 'y.txt'
         print ('writing Y to: '+file)
         np.savetxt(file,self.Y)
-
         self._analyze()
-
-        # self._kfold(k=10)
-
-
-
-
+        self._kfold(k=10)
 
     def _analyze(self):
-        train_idx = self.pairCount//2
+        train_idx = self.X.shape[0]//4*3
         clf = RandomForestClassifier()
         print('training classifier on '+str(train_idx) + ' vectors')
         clf.fit(self.X[:train_idx], self.Y[:train_idx])
-        print('predicting on ' + str(self.pairCount - train_idx) + ' vectors')
+        print('predicting on ' + str(self.X.shape[0] - train_idx) + ' vectors')
         prediction = clf.predict(self.X[train_idx:])
         actual = self.Y[train_idx:]
         tp=[]
@@ -59,13 +50,13 @@ class HypernymClassifier():
         fp=[]
         for i in range(len(prediction)):
             if prediction[i] == 1 and actual[i] == 1 and len(tp) < 10:
-                tp.append(i)
+                tp.append(i+train_idx)
             elif prediction[i] == 0 and actual[i] == 0 and len(tn) < 10:
-                tn.append(i)
+                tn.append(i+train_idx)
             elif prediction[i] == 0 and actual[i] == 1 and len(fn) < 10:
-                fn.append(i)
+                fn.append(i+train_idx)
             elif prediction[i] == 1 and actual[i] == 0 and len(fp) < 10:
-                fp.append(i)
+                fp.append(i+train_idx)
         print ('true positives: '+str(tp))
         print ('false positives: '+str(fp))
         print ('true negatives: '+str(tn))
@@ -96,12 +87,14 @@ class HypernymClassifier():
         return measure(Y_test, y_pred)
 
     def _readAnnotatedSet(self,filename):
-        hypernyms = set()
+        hypernyms = {}
         with open(filename,'r') as f:
             for line in f.readlines():
                 annotated_pair = self._parse_annotated_line(line)
                 if annotated_pair[2] == 'True':
-                    hypernyms.add((annotated_pair[0],annotated_pair[1]))
+                    hypernyms[(annotated_pair[0],annotated_pair[1])] = True
+                else:
+                    hypernyms[(annotated_pair[0],annotated_pair[1])] = False
         return hypernyms
 
     def _parse_annotated_line(self,line):
@@ -112,20 +105,28 @@ class HypernymClassifier():
     def _convertMapToSparseMatrix(self,pairDict,vectorLength):
         file = 'input.txt'
         print ('writing pairs and patterns to: '+file)
-        pairCount = len(pairDict)
-        X = sparse.lil_matrix((pairCount, vectorLength), dtype=np.int8)
-        Y = np.zeros((pairCount))
-        hypernym_set = self._readAnnotatedSet("annotated.txt")
+        hypernym_dict = self._readAnnotatedSet("annotated.txt")
+        shape = self._get_intersection_size(self._dict_to_key_set(pairDict),self._dict_to_key_set(hypernym_dict))
+        print ('Size of annotated set and shapes of X and Y: ' + str(shape))
+        X = sparse.lil_matrix((shape, vectorLength), dtype=np.int8)
+        Y = np.zeros((shape))
         i=0
         with open(file,'w') as f:
             for key,val in pairDict.iteritems():
-                f.write(str(i) + '\t' + key[0] + '\t' + key[1] + '\t' + str(val) + '\n')
-                if key in hypernym_set:
-                    Y[i] = 1
-                for j in val:
-                    X[i,int(j)] = 1
-                i+=1
+                if key in hypernym_dict:
+                    is_hypernym = hypernym_dict.get(key)
+                    if is_hypernym:
+                        Y[i] = 1
+                    else:
+                        Y[i] = 0
+                    for j in val:
+                        X[i,int(j)] = 1
+                    f.write(str(i) + '\t' + key[0] + '\t' + key[1] + '\t' + str(val) + '\t' + str(is_hypernym) + '\n' )
+                    i+=1
         return X,Y
+
+    def _get_intersection_size(self,set1,set2):
+        return len(set1 & set2)
 
     def _parseFileIntoMap(self,filename,dict,maxPattern):
         with open(filename,'r') as f:
@@ -151,9 +152,19 @@ class HypernymClassifier():
             maxPattern = int(path[2])
         return dict,maxPattern
 
+    def _dict_to_key_set(self,dict):
+        res = set()
+        for key in dict.keys():
+            res.add(key)
+        return res
+
+    def _save_sparse_matrix(self,filename,x):
+        with open(filename,'w') as f:
+            for i in range(x.shape[0]):
+                f.write(str(i) + '\t' + str(x[i]) + '\n')
 
 
 if __name__ == "__main__":
-    import warnings
-    warnings.filterwarnings("ignore")
+    # import warnings
+    # warnings.filterwarnings("ignore")
     clf = HypernymClassifier(["paths-r-00000","wordpairs-r-00000"])
